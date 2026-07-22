@@ -2,16 +2,17 @@ services:
   - type: web
     name: erp-crm-backend
     runtime: node
-    plan: starter
-    buildCommand: npm install && npm run build --workspace=backend && npm run prisma:migrate -- --name deploy
-    startCommand: npm start --workspace=backend
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npx prisma generate && npx prisma migrate deploy && npm run build
+    startCommand: node dist/server.js
     envVars:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        fromDatabase:
-          name: erp-crm-db
-          property: connectionString
+        sync: false
+      - key: DIRECT_URL
+        sync: false
       - key: JWT_ACCESS_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET
@@ -23,11 +24,6 @@ services:
       - key: JWT_REFRESH_EXPIRES_IN
         value: 7d
       - key: CLIENT_URL
-        value: https://your-vercel-frontend-url.vercel.app
+        sync: false
       - key: PORT
         value: 5000
-
-databases:
-  - name: erp-crm-db
-    plan: starter
-    ipAllowList: []

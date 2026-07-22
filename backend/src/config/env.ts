@@ -1,9 +1,9 @@
 import dotenv from 'dotenv';
 import { z } from 'zod';
-import path from 'path';
 
-// Load .env from root (two levels up from src/config)
-dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+// Load .env — works locally. On Render, env vars are injected directly.
+dotenv.config();
+
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
