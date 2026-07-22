@@ -1,0 +1,211 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Prisma Schema — ERP-CRM Case Study (Distribution & Wholesale)
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// System-wide user roles that control access permissions
+enum Role {
+  ADMIN
+  SALES
+  WAREHOUSE
+  ACCOUNTS
+}
+
+/// Customer account status
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// Direction of inventory movement
+enum MovementType {
+  IN
+  OUT
+}
+
+/// Sales challan lifecycle status
+enum SaleStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// System users — employees who operate the ERP-CRM
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role     @default(SALES)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  refreshTokens      RefreshToken[]
+  sales              Sale[]
+  inventoryMovements InventoryMovement[]
+
+  @@map("users")
+}
+
+/// HttpOnly refresh tokens for JWT rotation
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOMER CRM
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// B2B customers — distribution & wholesale clients
+model Customer {
+  id           String         @id @default(uuid())
+  businessName String         @map("business_name")
+  contactName  String         @map("contact_name")
+  email        String?
+  phone        String
+  gstNumber    String?        @map("gst_number")
+  address      String?
+  status       CustomerStatus @default(ACTIVE)
+  notes        String?
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  sales Sale[]
+
+  @@map("customers")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRODUCT MANAGEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Flat product categories (no nesting required for this scope)
+model Category {
+  id   String @id @default(uuid())
+  name String @unique
+
+  // Relations
+  products Product[]
+
+  @@map("categories")
+}
+
+/// Products — the items that are bought and sold
+model Product {
+  id           String   @id @default(uuid())
+  categoryId   String   @map("category_id")
+  sku          String   @unique
+  name         String
+  price        Decimal  @db.Decimal(10, 2)
+  currentStock Int      @default(0) @map("current_stock")
+  minimumStock Int      @default(0) @map("minimum_stock")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  category           Category            @relation(fields: [categoryId], references: [id])
+  inventoryMovements InventoryMovement[]
+  saleItems          SaleItem[]
+
+  @@map("products")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INVENTORY MANAGEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Full audit log of every stock change — both manual adjustments and sales
+/// Business Rule: OUT movements must not reduce current_stock below 0
+model InventoryMovement {
+  id           String       @id @default(uuid())
+  productId    String       @map("product_id")
+  movementType MovementType @map("movement_type")
+  quantity     Int
+  reason       String?
+
+  // Audit
+  createdById String   @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Relations
+  product   Product @relation(fields: [productId], references: [id])
+  createdBy User    @relation(fields: [createdById], references: [id])
+
+  @@map("inventory_movements")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SALES CHALLAN
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Sales Challan header — one per customer transaction
+model Sale {
+  id            String     @id @default(uuid())
+  customerId    String     @map("customer_id")
+  challanNumber String     @unique @map("challan_number")
+  totalAmount   Decimal    @map("total_amount") @db.Decimal(10, 2)
+  status        SaleStatus @default(CONFIRMED)
+  notes         String?
+
+  // Audit
+  createdById String   @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  customer  Customer   @relation(fields: [customerId], references: [id])
+  createdBy User       @relation(fields: [createdById], references: [id])
+  items     SaleItem[]
+
+  @@map("sales")
+}
+
+/// Line items per Sales Challan
+/// IMPORTANT: unit_price is a SNAPSHOT of product price at time of sale.
+/// Historical records remain accurate even after product price changes.
+model SaleItem {
+  id        String @id @default(uuid())
+  saleId    String @map("sale_id")
+  productId String @map("product_id")
+  quantity  Int
+
+  /// Price snapshot — copied from Product.price at time of sale creation
+  unitPrice  Decimal @map("unit_price") @db.Decimal(10, 2)
+  totalPrice Decimal @map("total_price") @db.Decimal(10, 2)
+
+  // Relations
+  sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("sale_items")
+}
