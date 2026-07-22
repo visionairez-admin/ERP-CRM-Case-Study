@@ -10,7 +10,7 @@ export const signup = async (req: Request, res: Response, next: NextFunction) =>
 
     sendSuccess({
       res,
-      statusCode: 201,
+      status: 201,
       message: 'Account created successfully',
       data: { user },
     });
